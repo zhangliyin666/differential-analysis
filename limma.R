@@ -1,34 +1,24 @@
 library(dplyr)
 library(edgeR)
 library(limma)
+library(edgeR)
 count <- read.csv("H:/nash-analysis/gene_count.csv")
 count <- filter(count,!duplicated(count$gene_name))
-count1 <- count[,2:11]
-treat1 <- count1[,c(10,8,2,3,7)]
-ctrl1 <- count1[,c(10,4,1,6,9,5)]
-count1 <- merge(ctrl1,treat1,by="gene_name")
-#limma·ÖÎöÔ¤´¦Àí
-#Èç¹ûÓÃsymbol×÷ÐÐÃû»á³öÏÖÖØ¸´¶ø±¨´í
-#×¢ÒâÈ¥ÖØ
-countdata_2 <- round(countdata_2)#È¡Õû£¬ËÄÉáÁùÈë5³ÉË«
+count1 <- count[,1:10]
+treat1 <- count1[,c(1,8,2,3,7)]
+ctrl1 <- count1[,c(1,4,10,6,9,5)]
+count1 <- merge(ctrl1,treat1,by="gene_id")
+#pre-processing
+####Here I use ensembl id and it needs to be transfer for convenient use.
+###A problem is that when using gene name, an error appears and says rownames couldn't be duplicated values.
+###If want to see the solution, see in another script "fpkm_to_tpm".
+#Here I just remove all duplicated data
+#count1 <- round(count1)#round numbers
 row.names(count1) <- count1[,1]
 count1 <- count1[,-1]
 head(count1)
 
-countdata <- count[,1:11]
-treat <- countdata[,c(1,9,3,4,8,11)]
-ctrl <- countdata[,c(1,5,2,7,10,6)]
-countdata <- cbind(ctrl,treat)
-countdata <- countdata[,c(1:6,8:12)]
-countdata_1 <- merge(ctrl,treat,by="gene_id")
-#count <- filter(count,!duplicated(count$gene_name))
-row.names(countdata) <- count[,1]
-countdata <- countdata[,-1]
-countdata <- countdata[,1:9]
-head(countdata)
-count1 <- countdata
-
-#¹ýÂËµÍ±í´ï
+#è¿‡æ»¤ä½Žè¡¨è¾¾
 d0 <- DGEList(count1)
 d0 <- calcNormFactors(d0)
 d0
@@ -36,8 +26,8 @@ d0
 cutoff <- 1
 drop <- which(apply(cpm(d0), 1, max) < cutoff)
 d0 <- d0[-drop,] 
-#·Ö×é
-condition <- factor(c(rep("control",5),rep("treat",4)), levels = c("control","treat"))
+#Groupinga nd Declare the order of contrast
+condition <- factor(c(rep("control",5),rep("treat",4)), levels = c("control","treat"),ordered = F)
 condition
 table(condition)
 
@@ -46,73 +36,52 @@ colnames(design) = levels(factor(condition))
 rownames(design) = colnames(condition)
 design
 
-#voom ±ê×¼»¯£¬Ïê¼û ?norm
+#voom normalization
 norm <- voom(d0, design, plot = TRUE)
-#¶ÔÓÚ¸ÃÇ÷ÊÆÏß£¬Èô×ó²à0Æðµã´¦ËùÊ¾²Ð²î±ê×¼²îÃ÷ÏÔÆ«¸ß£¬»òÕß0Æðµã´¦³öÏÖÉÏÊ½Ç÷ÊÆ£¬Ôò±íÃ÷Êý¾ÝÖÐ´æÔÚ½Ï¶àµÄµÍ±í´ï£¨low countsÊý£©»ùÒò¡£
+#If the std is obviously high or if there is a rise at 0, it means that data includes many low counts
 par(mfrow = c(2, 2))
 boxplot(d0)
 plotDensities(d0)
 boxplot(norm$E)
 plotDensities(norm$E)
 
-#ÏßÐÔÄâºÏ£¬Ïê¼û ?lmFit
+#linear fitting
 fit <- lmFit(norm, design, method = 'ls')
 
-#È·¶¨±È½ÏµÄÁ½×é
-#ºóÐø½«¼ÆËã±ê¼ÇÎª 1 µÄ×éÏà¶ÔÓÚ -1 µÄ×é£¬»ùÒò±í´ïÖµµÄÉÏµ÷/ÏÂµ÷×´Ì¬
-contrast <- makeContrasts('control-treat', levels = design)
+#To set the groups that ready to make contrast
+#"1" means upregulation, "-1" means downregulation
+contrast <- makeContrasts('treat-control', levels = design)
 contrast
 
-#Ê¹ÓÃ¾­Ñé±´Ò¶Ë¹Ä£ÐÍÄâºÏ±ê×¼Îó²î£¬Ïê¼û ?eBayes
+#The empirical Bayesian model was used to fit the standard deviation
 fit2 <- contrasts.fit(fit, contrast)
 fit2 <- eBayes(fit2)
 
 qqt(fit2$t, df = fit2$df.prior+fit2$df.residual, pch = 16, cex = 0.2)
 abline(0,1)
 
-#p ÖµÐ£Õý¡¢ÌáÈ¡²îÒì·ÖÎö½á¹û£¬Ïê¼û ?topTable
+#The correction of p value and extraction of DEG
 diff_gene <- topTable(fit2, number = Inf, adjust.method = 'fdr')
 diff_gene <- subset(diff_gene,diff_gene$P.Value<=0.05)
 head(diff_gene, 10)
 write.csv(diff_gene, file = 'diff_gene_2.csv')
 
-
-
 library("pheatmap")
 exprset <- norm$E
 
-library('biomaRt')
-library("curl")
-mart <- useDataset("mmusculus_gene_ensembl", useMart("ensembl"))
-my_ensembl_gene_id<-row.names(diff_gene)
-mmu_symbols<- getBM(attributes=c('ensembl_gene_id','external_gene_name',"description"),
-                    filters = 'ensembl_gene_id', values = my_ensembl_gene_id, mart = mart)
-
-head(mmu_symbols)
-head(diff_gene)
-
-ensembl_gene_id<-rownames(diff_gene)
-diff_gene<-cbind(ensembl_gene_id,diff_gene)
-colnames(diff_gene)[1]<-c("ensembl_gene_id")
-diff_name<-merge(diff_gene,mmu_symbols,by="ensembl_gene_id")
-write.csv(diff_name,file = "diff_name_1.csv")
-head(diff_name)
-
-
-
-#Ïà¹ØÐÔ
+#Relationship analysis
 table(condition)
 ac=data.frame(groups=condition)
-rownames(ac)=colnames(exprset) #°ÑacµÄÐÐÃû¸øµ½nµÄÁÐÃû£¬¼´¶ÔÃ¿Ò»¸öÌ½Õë±ê¼ÇÉÏ·Ö×éÐÅÏ¢
+rownames(ac)=colnames(exprset) #to set the column names of exprset as the row names of ac
 pheatmap(cor(exprset),annotation_col = ac)
 
 exprset=t(exprset) 
 exprset=as.data.frame(exprset)
-exprset=cbind(exprset,condition) ##¸ø±í´ï¾ØÕó¼ÓÉÏ·Ö×éÐÅÏ¢
+exprset=cbind(exprset,condition) #to add the group information to exprset
 
 library("FactoMineR")
 library("factoextra") 
-exprset.pca <- PCA(exprset[,-ncol(exprset)], graph = FALSE)#exprset×îºóÒ»ÁÐÊÇgroup_list¡£pca·ÖÎöÐèÒªÒ»¸ö´¿ÊýÖµ¾ØÕó£¬ËùÒÔ½«exprset×îºóÒ»ÁÐÈ¥µôÒÔºó¸³Öµ¸øexprset.pca
+exprset.pca <- PCA(exprset[,-ncol(exprset)], graph = FALSE)#The last column of exprset is group_list and pca analysis call a complete numeric matrix. So you should remove the last column.
 (fviz_pca_ind(exprset.pca,geom.ind = "point",
               col.ind = exprset$condition,
               palette = c("#00AFBB", "#E7B800"),
@@ -121,18 +90,19 @@ exprset.pca <- PCA(exprset[,-ncol(exprset)], graph = FALSE)#exprset×îºóÒ»ÁÐÊÇgro
 ))
 ggsave('all_samples_PCA.png')
 
-#×¢Òâ¼ì²é±í´ï¾ØÕó£¬Ç°Ãæ½øÐÐÁË×ªÖÃ£¬¶øÇÒÌí¼ÓÁËÐÅÏ¢
+#Check the exprset because we transpositted it
+exprset <- norm$E
 cg=names(tail(sort(apply(exprset,1,sd)),100))
 pheatmap(exprset[cg,],show_colnames =F,show_rownames = F)
-#¹éÒ»»¯
+#Normalization
 n=t(scale(t(exprset[cg,]))) 
 n[n>2]=2 
 n[n< -2]= -2
 n[1:4,1:4]
 pheatmap(n,show_colnames =F,show_rownames = F)
-#Ìí¼Ó·Ö×éÐÅÏ¢
+#add grouping information
 ac=data.frame(g=condition)
-rownames(ac)=colnames(n) #°ÑacµÄÐÐÃû¸øµ½nµÄÁÐÃû£¬¼´¶ÔÃ¿Ò»¸öÑù±¾±ê¼ÇÉÏ·Ö×éÐÅÏ¢
+rownames(ac)=colnames(n) 
 (heatmap <- pheatmap(n,show_colnames =T,show_rownames = T,
                      annotation_col=ac,
                      cluster_rows = F,
@@ -141,12 +111,12 @@ rownames(ac)=colnames(n) #°ÑacµÄÐÐÃû¸øµ½nµÄÁÐÃû£¬¼´¶ÔÃ¿Ò»¸öÑù±¾±ê¼ÇÉÏ·Ö×éÐÅÏ¢
 deg <- diff_gene
 head(deg)
 save(deg,file = 'deg.Rdata')
-#volcano
+#Volcano
 df <- deg
 colnames(deg)
 df$v <- -log10(df$P.Value)
 p_thred <- 0.05
-logFC_thred <- 0
+logFC_thred <- 1
 df$groups = ifelse(df$P.Value > p_thred, "stable", 
                    ifelse(df$logFC > logFC_thred, "up", 
                           ifelse(df$logFC < -logFC_thred, "down", 
@@ -168,7 +138,7 @@ p <- ggplot(data = df, aes(x = logFC, y = v)) +
   ggtitle( this_tile ) + theme(plot.title = element_text(size=15,hjust = 0.5))+
   theme_bw()
 p
-
+#to highlight the interested genes
 df$symbol <- row.names(df)
 for_label <- df %>% 
   filter(abs(logFC) >0 & -log10(P.Value)> -log10(0.001))
@@ -187,8 +157,8 @@ library(ggplot2)
 library(clusterProfiler)
 library(org.Mm.eg.db)
 gene.df <- bitr(unique(df$SYMBOL), fromType = "SYMBOL",
-           toType = c( "ENTREZID","ENTREZID"),
-           OrgDb = org.Mm.eg.db)
+                toType = c( "ENTREZID","ENTREZID"),
+                OrgDb = org.Mm.eg.db)
 head(gene.df)
 DEG=df
 DEG=merge(DEG,gene.df,by='SYMBOL')
@@ -197,7 +167,7 @@ table(DEG$groups)
 
 save(DEG,file = 'anno_DEG.Rdata')
 write.csv(DEG,file = "anno_DEG.csv")
-
+######################################################
 
 gene_up <- DEG[DEG$groups == 'up','ENTREZID'] 
 gene_down <- DEG[DEG$groups == 'down','ENTREZID'] 
@@ -210,17 +180,17 @@ geneList <- sort(geneList,decreasing = T)
 
 
 ego_cc_up<-enrichGO(gene       = gene_up,
-                 OrgDb      = org.Mm.eg.db,
-                 keyType    = 'ENTREZID',
-                 ont        = "CC",
-                 pAdjustMethod = "BH",
-                 pvalueCutoff = 0.05)
-ego_cc_down<-enrichGO(gene       = gene_down,
                     OrgDb      = org.Mm.eg.db,
                     keyType    = 'ENTREZID',
                     ont        = "CC",
                     pAdjustMethod = "BH",
                     pvalueCutoff = 0.05)
+ego_cc_down<-enrichGO(gene       = gene_down,
+                      OrgDb      = org.Mm.eg.db,
+                      keyType    = 'ENTREZID',
+                      ont        = "CC",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff = 0.05)
 ego_cc_diff<-enrichGO(gene       = gene_diff,
                       OrgDb      = org.Mm.eg.db,
                       keyType    = 'ENTREZID',
@@ -229,17 +199,17 @@ ego_cc_diff<-enrichGO(gene       = gene_diff,
                       pvalueCutoff = 0.05)
 
 ego_bp_up<-enrichGO(gene       = gene_up,
-                 OrgDb      = org.Mm.eg.db,
-                 keyType    = 'ENTREZID',
-                 ont        = "BP",
-                 pAdjustMethod = "BH",
-                 pvalueCutoff = 0.05)
-ego_bp_down<-enrichGO(gene       = gene_down,
                     OrgDb      = org.Mm.eg.db,
                     keyType    = 'ENTREZID',
                     ont        = "BP",
                     pAdjustMethod = "BH",
                     pvalueCutoff = 0.05)
+ego_bp_down<-enrichGO(gene       = gene_down,
+                      OrgDb      = org.Mm.eg.db,
+                      keyType    = 'ENTREZID',
+                      ont        = "BP",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff = 0.05)
 ego_bp_diff<-enrichGO(gene       = gene_diff,
                       OrgDb      = org.Mm.eg.db,
                       keyType    = 'ENTREZID',
@@ -247,17 +217,17 @@ ego_bp_diff<-enrichGO(gene       = gene_diff,
                       pAdjustMethod = "BH",
                       pvalueCutoff = 0.05)
 ego_mf_up<-enrichGO(gene       = gene_up,
-                 OrgDb      = org.Mm.eg.db,
-                 keyType    = 'ENTREZID',
-                 ont        = "MF",
-                 pAdjustMethod = "BH",
-                 pvalueCutoff = 0.05)
-ego_mf_down<-enrichGO(gene       = gene_down,
                     OrgDb      = org.Mm.eg.db,
                     keyType    = 'ENTREZID',
                     ont        = "MF",
                     pAdjustMethod = "BH",
                     pvalueCutoff = 0.05)
+ego_mf_down<-enrichGO(gene       = gene_down,
+                      OrgDb      = org.Mm.eg.db,
+                      keyType    = 'ENTREZID',
+                      ont        = "MF",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff = 0.05)
 ego_mf_diff<-enrichGO(gene       = gene_diff,
                       OrgDb      = org.Mm.eg.db,
                       keyType    = 'ENTREZID',
@@ -267,15 +237,15 @@ ego_mf_diff<-enrichGO(gene       = gene_diff,
 dotplot(ego_cc_diff,
         showCategory = 20,
         title="The GO_CC_down enrichment analysis of all DEGs ")
-        #color = 'pvalue')
+#color = 'pvalue')
 dotplot(ego_bp_diff,
         showCategory = 20,
         title="The GO_BP_diff enrichment analysis of all DEGs ")
-        #color = 'pvalue')
+#color = 'pvalue')
 dotplot(ego_mf_diff,
         showCategory = 20,
         title="The GO_MF_diff enrichment analysis of all DEGs ")
-        #color = 'pvalue')
+#color = 'pvalue')
 
 {
   
@@ -329,13 +299,13 @@ kk.up <- enrichKEGG(gene         = gene_up,
                     universe     = gene_all,
                     pvalueCutoff = 0.05)
 kk.down <- enrichKEGG(gene         = gene_down,
-                    organism     = 'mmu',
-                    universe     = gene_all,
-                    pvalueCutoff = 0.05)
+                      organism     = 'mmu',
+                      universe     = gene_all,
+                      pvalueCutoff = 0.05)
 kk.diff <- enrichKEGG(gene         = gene_diff,
-                    organism     = 'mmu',
-                    universe     = gene_all,
-                    pvalueCutoff = 0.05)
+                      organism     = 'mmu',
+                      universe     = gene_all,
+                  pvalueCutoff = 0.05)
 
 kk@result$qvalue = 0
 kk@result$p.adjust = 0

@@ -1,31 +1,28 @@
 count <- read.table("I:/ZCXrnaseq/genecounts.txt",header = T)
 library(DESeq2)
 library(tidyverse)
-countdata <- count[,1:9]
-treat <- countdata[,c(1,6:9)]
+#refer ensembl gene id as standard
+countdata <- count[,1:10]
+treat <- countdata[,c(1,6:10)]
 ctrl <- countdata[,1:5]
-#test1
+#There are two ways to merge them into one data set
+#test1: by cbind
 countdata_1 <- cbind(ctrl,treat)
-countdata_1 <- countdata_1[,c(1:6,8:11)]
+countdata_1 <- countdata_1[,c(1:5,7:11)]
 row.names(countdata_1) <- countdata_1[,1]
 countdata_1 <- countdata_1[,-1]
-
 head(countdata_1)
-#test2
+#test2: by merge
 countdata_2 <- merge(ctrl,treat,by="gene_id")
 row.names(countdata_2) <- countdata_2[,1]
 countdata_2 <- countdata_2[,-1]
-
 head(countdata_2)
+###Here I use ensembl id and it needs to be transfer for convenient use.
+###A problem is that when using gene name, an error appears and says rownames couldn't be duplicated values.
+###If want to see the solution, see in another script "fpkm_to_tpm".
 
-#count <- filter(count,!duplicated(count$gene_name))
-
-row.names(countdata) <- count[,1]
-countdata <- countdata[,-1]
-countdata <- countdata[,1:9]
-head(countdata)
-#·Ö×é
-condition <- factor(c(rep("control",4),rep("treat",4)), levels = c("control","treat"))
+#grouping
+condition <- factor(c(rep("control",4),rep("treat",5)), levels = c("control","treat"),ordered = F)
 condition
 table(condition)
 coldata_1 <- data.frame(row.names=colnames(countdata_1), condition)
@@ -33,40 +30,42 @@ coldata_2 <- data.frame(row.names=colnames(countdata_2), condition)
 coldata_2
 table(coldata_2)
 
-#¹¹½¨dds¶ÔÏó
+#to build dds object
 dds_1 <- DESeqDataSetFromMatrix(countdata_1, coldata_1, design= ~ condition)
 dds_2 <- DESeqDataSetFromMatrix(countdata_2, coldata_2, design= ~ condition)
-#¹ıÂËµÍ·á¶ÈÊı¾İ
+#to filter low abundance data
 dds_1 <- dds_1[rowSums(counts(dds_1)) > 1, ] 
 dds_2 <- dds_2[rowSums(counts(dds_2)) > 1, ] 
-#¼ÆËã¹éÒ»»¯Êı¾İ
-#colData(dds)¶àÁËsizeFactorÕâÒ»ÁĞ£¬¶Ô²âĞòÉî¶ÈºÍÎÄ¿â×é³É½øĞĞĞ£Õı
+#to calculate nomalized data
+#colData(dds) adds column "sizeFcator", which is used to correct sequencing depth and component of library
 dds_1 <- estimateSizeFactors(dds_1) 
 dds_2 <- estimateSizeFactors(dds_2) 
-#±ê×¼»¯countÊı¾İ
+#normalization
 normalized_counts_1 <- counts(dds_1,normalized=T) 
 normalized_counts_2 <- counts(dds_2,normalized=T)
 
-#ÉùÃ÷±È¶ÔË³Ğò
-#Ç°ÃæµÄÎª¶ÔÕÕ×é
+#to set the order of comparison
+#the first one is control group
 dds_2$condition <- factor(dds_2$condition,levels = c("control","treat"))
-#»ò
+dds_1$condition <- factor(dds_1$condition,levels = c("control","treat"))
+#or
 dds_2$condition <- relevel(dds_2$condition,ref = "control")
+dds_1$condition <- relevel(dds_1$condition,ref = "control")
 
-#²îÒì·ÖÎö
+#differential analysis
 dds_1 <- DESeq(dds_1)
 dds_1
 dds_2 <- DESeq(dds_2)
 dds_2
 
-#»ñµÃ½á¹û
+#to get the result
 res_1= results(dds_1)
 res_1 = res_1[order(res_1$pvalue),]
 
 res_2= results(dds_2)
 res_2 = res_2[order(res_2$pvalue),]
 
-#»ò
+#or
 res <- results(dds, 
                contrast=c("condition","control","treat"),
                alpha = 0.05,#alpha: the adjusted p-value cutoff. 
@@ -94,7 +93,7 @@ mmu_symbols<- getBM(attributes=c('ensembl_gene_id','external_gene_name',"descrip
 
 head(mmu_symbols)
 head(diff_gene_deseq2)
-
+#get the annotated DEG
 ensembl_gene_id<-rownames(diff_gene_deseq2)
 diff_gene_deseq2<-cbind(ensembl_gene_id,diff_gene_deseq2)
 colnames(diff_gene_deseq2)[1]<-c("ensembl_gene_id")
@@ -113,34 +112,13 @@ d <- plotCounts(dds, gene="ENSMUSG00000076614", intgroup="condition", returnData
 ggplot(d, aes(x=condition, y=count)) + 
   geom_point(aes(color= condition),size= 4, position=position_jitter(w=0.5,h=0)) + 
   scale_y_log10(breaks=c(25,100,400))+ ggtitle("Ighg1")
-#pca plot
+#PCA plot by vst
 vsdata <- vst(dds_2, blind=FALSE)
-pcadata <- plotPCA(vsdata, intgroup="condition")#returnData = T)
+pcadata <- plotPCA(vsdata, intgroup="condition",returnData = T)
 pcadata <- pcadata[order(pcadata$condition,decreasing=F),]
 table(pcadata$condition)
-
-
-#count matrix heatmap
-library("pheatmap")
-select<-order(rowMeans(counts(dds_2, normalized = TRUE)),
-              decreasing = TRUE)[1:50]
-df <- as.data.frame(colData(dds_2)[,c("condition","sizeFactor")])
-ntd <- normTransform(dds_2)
-pheatmap(assay(ntd)[select,], cluster_rows=FALSE, show_rownames=F,
-         cluster_cols=FALSE, annotation_col=df)
-#sample-to-sample heatmap
-sampleDists <- dist(t(assay(vsdata)))
-library("RColorBrewer")
-sampleDistMatrix <- as.matrix(sampleDists)
-rownames(sampleDistMatrix) <- paste(vsdata@colData@rownames, vsdata$type, sep="-")
-colnames(sampleDistMatrix) <- NULL
-colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
-pheatmap(sampleDistMatrix,
-         clustering_distance_rows=sampleDists,
-         clustering_distance_cols=sampleDists,
-         col=colors)
-
-#PCA
+#PCA after log2 tranferation
+#to get expression set firstly
 rld <- rlogTransformation(dds_2)
 exprSet_new=assay(rld)
 exprSet_new <- t(exprSet_new)
@@ -158,37 +136,60 @@ fviz_pca_ind(dat.pca,
              geom.ind = "point", # show points only (nbut not "text")
              col.ind = exprSet_new$condition, # color by groups
              palette = c("#00AFBB", "#E7B800", '#CC00FF', '#FF0099'),
-             addEllipses = TRUE, # Concentration ellipses # ÊÇ·ñÈ¦ÆğÀ´
+             addEllipses = TRUE, # Concentration ellipses # æ˜¯å¦åœˆèµ·æ¥
              legend.title = "Groups")
 
-#enrichment
+#count matrix heatmap
+library("pheatmap")
+select<-order(rowMeans(counts(dds_2, normalized = TRUE)),
+              decreasing = TRUE)[1:50]#first 50 genes
+df <- as.data.frame(colData(dds_2)[,c("condition","sizeFactor")])
+ntd <- normTransform(dds_2)
+pheatmap(assay(ntd)[select,], cluster_rows=FALSE, show_rownames=F,
+         cluster_cols=FALSE, annotation_col=df)
+#sample-to-sample heatmap
+sampleDists <- dist(t(assay(vsdata)))
+library("RColorBrewer")
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsdata@colData@rownames, vsdata$type, sep="-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+
+
+#enrichment by ClusterProfiler
 library(clusterProfiler)
 library(DOSE)
 library(org.Mm.eg.db)
 sig.gene <- read.csv(file = "diff_name.csv")
-#×¢ÒâÒ»ÏÂ,¶ÁÈ¡csvÊ±»áÓĞ¸ñÊ½¸Ä±ä
-#µÚÒ»ÁĞensembl idÊÇ·ñÓĞÁĞÃû£¬Ã»ÓĞµÄ»°¼ÇµÃ¸Ä
+#Attention the file format
+#Make sure if the first column has colname
 row.names(sig.gene) <- sig.gene$ensembl_gene_id
 sig.gene <- sig.gene[,-1]
 head(sig.gene)
-sig.gene <- as.data.frame(diff_name)
-#²éÕÒNA²¢·µ»Ø×ø±ê
+#sometimes after input, some values turned into NA
+#to find NAs and return the coordinates
 which(is.na(sig.gene),arr.ind = T)
 deg[is.na(sig.gene)] <- 0
-#È¡ÉÏÏÂµ÷»ùÒò
+#to set the up- or down- regulated genes
 p_thred <- 0.05
 logFC_thred <- 2
 sig.gene$change=ifelse(sig.gene$pvalue>p_thred,'stable',
-             ifelse( sig.gene$log2FoldChange > logFC_thred,'UP',
-                     ifelse( sig.gene$log2FoldChange < -logFC_thred,'DOWN','stable') )
+                       ifelse( sig.gene$log2FoldChange > logFC_thred,'UP',
+                               ifelse( sig.gene$log2FoldChange < -logFC_thred,'DOWN','stable') )
 )
 table(sig.gene$change)
 write.csv(sig.gene,file = "sig_gene.csv")
+#assign the row names of sig.gene to gene (vector)
 gene<-row.names(sig.gene)
 head(gene)
 
 
-#id×ª»»
+#id transferation
 gene.df<-bitr(gene, fromType = "ENSEMBL",
               toType = c("SYMBOL","ENTREZID"),
               OrgDb = org.Mm.eg.db)
@@ -241,7 +242,7 @@ meta <- ego_bp@result[grep(pattern="metaboli",ego_bp@result[,2]),]
 kk<-enrichKEGG(gene      =gene.df$ENTREZID,
                organism = 'mmu',
                pvalueCutoff = 0.9)#0.05
-#°Ñentrezid»»³É»ùÒòÃû
+#to convert the entrzid to symbol
 kk=DOSE::setReadable(kk, OrgDb='org.Mm.eg.db',keyType='ENTREZID')
 kk[1:12]
 kk@result$qvalue = 0
@@ -251,7 +252,7 @@ dotplot(kk,showCategory = 25, title="The KEGG enrichment analysis of all DEGs",c
 #cnetplot(kk , categorySize="pvalue", foldChange=gene,colorEdge = TRUE)
 cnetplot(kk,foldChange=gene, circular = TRUE, colorEdge = TRUE)
 emapplot(kk,foldChange=gene, circular = TRUE, colorEdge = TRUE,color = "pvalue")
-##GSEA
+##GSEA 
 sig.gene <- as.data.frame(diff_name)
 gene_1=data.frame(sig.gene$ensembl_gene_id,sig.gene$log2FoldChange,stringsAsFactors=FALSE)
 geneID=select(org.Mm.eg.db,keys=sig.gene$ensembl_gene_id,columns="ENTREZID",keytype="ENSEMBL")
@@ -263,7 +264,7 @@ names(genelist)=tmp$ENTREZID
 head(genelist)
 genelist_sort=sort(genelist,decreasing = T)
 head(genelist_sort)
-#GO×¢ÊÍ
+#GO annotation
 gsemf <- gseGO(genelist_sort,
                OrgDb = org.Mm.eg.db,
                keyType = "ENTREZID",
@@ -273,7 +274,7 @@ head(gsemf)
 library(enrichplot)
 gseaplot(gsemf, geneSetID=1,title = gsemf@result$Description[1])
 gseaplot2(gsemf, geneSetID=1,title = gsemf@result$Description[1])
-#KEGG×¢ÊÍ
+#KEGG annotation
 kegg <- gseKEGG(genelist_sort ,
                 organism     = 'mmu',
                 nPerm        = 1000,
@@ -282,7 +283,8 @@ kegg <- gseKEGG(genelist_sort ,
                 pvalueCutoff = 0.9,
                 verbose      = FALSE)
 head(kegg)
-#pathway
+
+#pathway analysis
 library("pathview")
 library("gage")
 library("gageData")
@@ -312,7 +314,7 @@ keggresids = substr(keggrespathways, start=1, stop=8)
 keggresids
 plot_pathway = function(pid) pathview(gene.data=foldchanges, pathway.id=pid, species="mmu", new.signature=FALSE)
 pics = sapply(keggresids, function(pid) pathview(gene.data=foldchanges, pathway.id=pid, species="mmu"))
-#volcano
+#volcano plot 
 library(ggplot2)
 data <- as.data.frame(diff_name@listData)
 data <- data[,c(1,3,6,8)]
@@ -320,7 +322,7 @@ head(data)
 data$change = ifelse(data$pvalue < 0.05 & abs(data$log2FoldChange) >= 1, 
                      ifelse(data$log2FoldChange > 1,'Up','Down'),
                      'Stable')
-#·¨1
+#method1
 p <- ggplot(data = data, 
             aes(x = data$log2FoldChange, 
                 y = -log10(data$pvalue), 
@@ -340,6 +342,7 @@ p <- ggplot(data = data,
         legend.title = element_blank())
 p
 
+library(ggrepel)
 data$label=ifelse(data$pvalue < 0.05 & abs(data$log2FoldChange) >= 1,data$external_gene_name,"")
 p+geom_text_repel(data = data, aes(x = data$log2FoldChange, 
                                    y = -log10(data$pvalue), 
@@ -348,7 +351,7 @@ p+geom_text_repel(data = data, aes(x = data$log2FoldChange,
                   point.padding = unit(0.8, "lines"), 
                   segment.color = "black", 
                   show.legend = FALSE)
-#·¨2
+#method2 
 p <- ggplot(data = data, 
             aes(x = log2FoldChange, 
                 y = -log10(pvalue))) +
@@ -359,7 +362,7 @@ p <- ggplot(data = data,
   geom_hline(yintercept = -log10(0.01),lty=4,col="black",lwd=0.8) +
   theme_bw()
 p
-
+#highlight the intersted genes
 for_label <- data %>% 
   filter(abs(log2FoldChange) >3 & -log10(pvalue)> -log10(0.000001))
 p +
@@ -371,13 +374,13 @@ p +
   )
 
 
-#¹¹½¨exprset×÷²îÒì»ùÒòÈÈÍ¼
+#Build the DEG heatmap using expression set
 rld <- rlogTransformation(dds_2)
 exprSet=assay(rld)
 mart <- useDataset("mmusculus_gene_ensembl", useMart("ensembl"))
 my_ensembl_gene_id_1<-row.names(exprSet)
 mmu_symbols_1<- getBM(attributes=c('ensembl_gene_id','external_gene_name',"description"),
-                    filters = 'ensembl_gene_id', values = my_ensembl_gene_id_1, mart = mart)
+                      filters = 'ensembl_gene_id', values = my_ensembl_gene_id_1, mart = mart)
 ensembl_gene_id_1<-rownames(exprSet)
 exprSet<-cbind(ensembl_gene_id_1,exprSet)
 colnames(exprSet)[1]<-c("ensembl_gene_id")
@@ -385,32 +388,34 @@ exprSet <- as.data.frame(exprSet)
 exprSet_new<-merge(exprSet,mmu_symbols_1,by="ensembl_gene_id")
 head(exprSet_new)#28367
 write.csv(exprSet_new,file = "exprset_description.csv")
-exprSet_new <- exprSet_new[,1:10]
+exprSet_new <- exprSet_new[,2:11]
 b <- as.data.frame(exprSet_new$external_gene_name)
 colnames(b) <- "symbol"
 exprSet_new <- cbind(b,exprSet_new)
-exprSet_new <- exprSet_new[,c(1,3:10)]
+exprSet_new <- exprSet_new[,c(1:10)]
 a <- exprSet_new
 str(exprSet_new)
 #exprSet_new <- a
 
-#È¡Æ½¾ù²¢È¥ÖØ¸´
-#!!!!×¢ÒâÊı¾İÀàĞÍ£¡ÊµÔÚ²»ĞĞ¾ÍÏÈwrite.csvÔÙ¶Á½øÀ´£¡±ØĞëÊÇnumeric£¡
+#to get mean data because some observations appear two or more times
+#ATTENTION: the type of data must be numeric
+#You could write it into csv and then read it
 write.csv(exprSet_new,'exprset.csv')
 exprSet_new<- read.csv('exprset.csv',T)
 exprSet_new <- exprSet_new[,-1]
+#to take the average
 data3 <- aggregate( . ~ symbol,data=exprSet_new, mean)
 write.csv(data3,file = "exprset_filt.csv")
-#»ò
+#or
 data4 <- aggregate(exprSet_new[,2:10],list(exprSet_new$symbol),mean)
 
-#²îÒì»ùÒòÈÈÍ¼
+#DEG heatmap
 FC <- sig.gene$log2FoldChange
 names(FC) <- sig.gene$external_gene_name
 class(FC)
 FC
 DEG_110 <- c(names(head(sort(FC),55)),names(tail(sort(FC),55)))
-head(DEG_200)
+head(DEG_110)
 rownames(data3) <- data3$symbol
 data3 <- data3[,-1]
 dat <- t(scale(t(data3[DEG_110,])))
@@ -423,14 +428,14 @@ pheatmap(dat,show_colnames =T,show_rownames = T,
          border_color = NA,
          color = colorRampPalette(c("navy", "white", "firebrick3"))(50)) 
 
-samples <- rep(c('control', 'treat'), c(4, 4))
+samples <- rep(c('control', 'treat'), c(4, 5))
 heat <- Heatmap(dat, 
-                col = colorRampPalette(c('navy', 'white', 'firebrick3'))(100), #¶¨ÒåÈÈÍ¼ÓÉµÍÖµµ½¸ßÖµµÄ½¥±äÑÕÉ«
-                heatmap_legend_param = list(grid_height = unit(10,'mm')),  #Í¼Àı¸ß¶ÈÉèÖÃ
-                show_row_names = T,  #²»Õ¹Ê¾»ùÒòÃû³Æ
+                col = colorRampPalette(c('navy', 'white', 'firebrick3'))(100), #to set the color from high to low expression
+                heatmap_legend_param = list(grid_height = unit(10,'mm')),  #to set the height of legends
+                show_row_names = T,  #not to show gene names
                 top_annotation = HeatmapAnnotation(Group = samples, 
                                                    simple_anno_size = unit(2, 'mm'), 
-                                                   col = list(Group = c('control' = '#00DAE0', 'treat' = '#FF9289')),  #¶¨ÒåÑù±¾·Ö×éµÄÑÕÉ«
+                                                   col = list(Group = c('control' = '#00DAE0', 'treat' = '#FF9289')),  #to set the sample groups color
                                                    show_annotation_name = FALSE), 
                 column_names_gp = gpar(fontsize = 10), 
                 row_names_gp = gpar(fontsize = 6),
@@ -438,12 +443,14 @@ heat <- Heatmap(dat,
                 cluster_columns = F)
 heat
 #show <- read.delim('show_name.txt', header = FALSE, check.names = FALSE)
+#to show the interested genes
 show <- as.data.frame(rownames(dat))
 colnames(show)<-"V1"
-show <- show[1:110,]
-#!!!×¢Òâ°¡£¡ÕâÀïÕÛÌÚÁË³¬¼¶¾Ã
-#showÊÇÔ­×ÓÏòÁ¿²»ÊÇµİ¹éÏòÁ¿°¡£¡$ÊÊÓÃÓÚµİ¹é¶ø[]²ÅÊÇÓÃÓÚÔ­×ÓµÄ£¡
-#ÓÃis.recursive(show)ºÍis.atomic(show)ÅĞ¶ÏÒ»ÏÂ£¡
+show <- show[1:11,]
+#!!!ATTENTION!!!
+# "show" must be atomic vector but not recursive vectorï¼
+# "$" is for recursive and "[]" is for atomic!!
+# is.recursive(show) and is.atomic(show) may help you
 heat + rowAnnotation(link = anno_mark(at = which(rownames(dat) %in% show), 
                                       labels = show, labels_gp = gpar(fontsize = 5)))
 
